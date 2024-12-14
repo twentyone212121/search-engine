@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{self, AtomicUsize};
+use std::sync::RwLock;
 use std::vec::Vec;
 
 #[derive(Clone, Debug)]
@@ -16,25 +17,20 @@ pub struct DocReference {
 }
 
 pub struct InvertedIndex {
-    index: Arc<RwLock<HashMap<String, Vec<DocReference>>>>,
-    next_doc_id: Arc<RwLock<usize>>,
+    index: RwLock<HashMap<String, Vec<DocReference>>>,
+    next_doc_id: AtomicUsize,
 }
 
 impl InvertedIndex {
     pub fn new() -> Self {
         InvertedIndex {
-            index: Arc::new(RwLock::new(HashMap::new())),
-            next_doc_id: Arc::new(RwLock::new(0)),
+            index: RwLock::new(HashMap::new()),
+            next_doc_id: AtomicUsize::new(0),
         }
     }
 
     pub fn add_document(&self, document: Document) -> usize {
-        let doc_id = {
-            let mut next_id = self.next_doc_id.write().unwrap();
-            let current_id = *next_id;
-            *next_id += 1;
-            current_id
-        };
+        let doc_id = self.next_doc_id.fetch_add(1, atomic::Ordering::Relaxed);
 
         let tokens = self.tokenize(&document.content);
 
@@ -107,20 +103,10 @@ impl InvertedIndex {
     }
 
     pub fn document_count(&self) -> usize {
-        *self.next_doc_id.read().unwrap()
+        self.next_doc_id.load(atomic::Ordering::Relaxed)
     }
 
     pub fn term_count(&self) -> usize {
         self.index.read().unwrap().len()
-    }
-}
-
-// Optional: Thread-safe clone implementation
-impl Clone for InvertedIndex {
-    fn clone(&self) -> Self {
-        InvertedIndex {
-            index: Arc::clone(&self.index),
-            next_doc_id: Arc::clone(&self.next_doc_id),
-        }
     }
 }
