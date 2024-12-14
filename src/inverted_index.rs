@@ -5,7 +5,6 @@ use std::vec::Vec;
 
 #[derive(Clone, Debug)]
 pub struct Document {
-    pub id: usize,
     pub name: String,
     pub content: String,
 }

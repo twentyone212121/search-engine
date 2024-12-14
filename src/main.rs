@@ -4,38 +4,24 @@ mod inverted_index;
 use thread_pool::ThreadPool;
 use inverted_index::{InvertedIndex, Document};
 use std::{
-    io::{prelude::*, BufReader},
-    net::{TcpListener, TcpStream},
-    sync::Arc,
+    fs, io::{self, prelude::*, BufReader}, net::{TcpListener, TcpStream}, path::{Path, PathBuf}, sync::Arc
 };
 
-fn main() {
+fn main() -> io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let pool = ThreadPool::new(4);
     let index = Arc::new(InvertedIndex::new());
+    let corpus_dir = "/Users/deniskyslytsyn/Documents/КПІшка))/7 семестр/ПО курс/aclImdb/train/pos";
 
-    let default_docs = vec![
-        Document {
-            id: 0,
-            name: "Rust Programming".to_string(),
-            content: "Rust is a systems programming language that runs blazingly fast, prevents segfaults, and guarantees thread safety.".to_string()
-        },
-        Document {
-            id: 1,
-            name: "Web Servers".to_string(),
-            content: "Web servers handle HTTP requests and respond with content. They can be built using various programming languages and frameworks.".to_string()
-        },
-        Document {
-            id: 2,
-            name: "Concurrency".to_string(),
-            content: "Concurrent programming allows multiple computations to happen simultaneously. Rust provides powerful tools for safe concurrency.".to_string()
-        }
-    ];
-
-    for doc in default_docs {
-        index.add_document(doc);
+    for path in txt_files_in_dir(corpus_dir)? {
+        let index = Arc::clone(&index);
+        pool.execute(move || {
+            if let Err(e) = add_file_to_index(path.as_path(), &index) {
+                eprintln!("Error processing file {}: {}", path.to_string_lossy(), e);
+            }
+        })
     }
-
+    pool.join();
     println!("Indexing complete. Total documents: {}", index.document_count());
     println!("Unique terms: {}", index.term_count());
 
@@ -48,8 +34,33 @@ fn main() {
             handle_connection(stream, &index);
         });
     }
-
     println!("Shutting down.");
+
+    Ok(())
+}
+
+fn txt_files_in_dir(dir_path: &str) -> io::Result<Vec<PathBuf>> {
+    Ok(fs::read_dir(dir_path)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().map_or(false, |ext| ext == "txt"))
+        .collect::<Vec<_>>()
+    )
+}
+
+fn add_file_to_index(path: &Path, index: &InvertedIndex) -> io::Result<()> {
+    let mut file = fs::File::open(path)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+
+    let document = Document {
+        name: path.file_name().unwrap().to_string_lossy().into_owned(),
+        content,
+    };
+
+    index.add_document(document);
+    println!("Indexed file: {:?}", path);
+    Ok(())
 }
 
 fn handle_connection(mut stream: TcpStream, index: &InvertedIndex) {
