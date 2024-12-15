@@ -171,12 +171,12 @@ fn handle_connection(mut stream: TcpStream, index: &InvertedIndex) {
                         let results = index.search(&term);
 
                         let contents = if results.is_empty() {
-                            format!("No results found for query: {}", query)
+                            format!("No results found for term: {}", term)
                         } else {
-                            let mut output = format!("Search results for '{}':\n", query);
-                            for (doc_id, references) in results {
-                                output.push_str(&format!("Document ID: {}\n", doc_id));
-                                output.push_str(&format!("References: {:?}\n\n", references));
+                            let mut output = format!("Search results for '{}':\n", term);
+                            for doc_ref in results {
+                                output.push_str(&format!("Document ID: {}\n", doc_ref.doc_id));
+                                output.push_str(&format!("Matches: {}\n\n", doc_ref.matches));
                             }
                             output
                         };

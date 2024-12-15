@@ -9,10 +9,10 @@ pub struct Document {
     pub content: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DocReference {
     pub doc_id: usize,
-    pub positions: Vec<usize>,
+    pub matches: usize,
 }
 
 pub struct InvertedIndex {
@@ -34,18 +34,19 @@ impl InvertedIndex {
         let doc_id = self.next_doc_id.fetch_add(1, atomic::Ordering::Relaxed);
 
         let tokens = self.tokenize(&document.content);
+        let mut token_counts: HashMap<String, usize> = HashMap::new();
+        for token in tokens {
+            *token_counts.entry(token).or_default() += 1;
+        }
 
         {
             let mut index = self.index.write().unwrap();
 
-            for (position, token) in tokens.into_iter().enumerate() {
+            for (token, matches) in token_counts.into_iter() {
                 index
                     .entry(token)
                     .or_insert_with(Vec::new)
-                    .push(DocReference {
-                        doc_id,
-                        positions: vec![position],
-                    });
+                    .push(DocReference { doc_id, matches });
             }
         }
 
@@ -54,47 +55,28 @@ impl InvertedIndex {
         doc_id
     }
 
-    pub fn search(&self, query: &str) -> Vec<(usize, Vec<DocReference>)> {
+    pub fn search(&self, query: &str) -> Vec<DocReference> {
         let index = self.index.read().unwrap();
 
         let tokens = self.tokenize(query);
 
-        let mut results: HashMap<usize, Vec<DocReference>> = HashMap::new();
+        let mut results: HashSet<DocReference> = HashSet::new();
 
         for token in tokens {
             if let Some(references) = index.get(&token) {
-                let token_docs: HashSet<usize> = references.iter().map(|r| r.doc_id).collect();
-
                 if results.is_empty() {
-                    for reference in references {
-                        results.insert(reference.doc_id, vec![reference.clone()]);
-                    }
+                    results = HashSet::from_iter(references.iter().cloned());
                 } else {
-                    results = results
-                        .into_iter()
-                        .filter(|&(doc_id, _)| token_docs.contains(&doc_id))
-                        .collect();
-
-                    for (doc_id, doc_refs) in &mut results {
-                        if let Some(new_refs) = references
-                            .iter()
-                            .filter(|r| r.doc_id == *doc_id)
-                            .cloned()
-                            .next()
-                        {
-                            doc_refs.push(new_refs);
-                        }
-                    }
+                    let references: HashSet<DocReference> =
+                        HashSet::from_iter(references.iter().cloned());
+                    results.retain(|doc_ref| references.contains(doc_ref));
                 }
             } else {
                 return Vec::new();
             }
         }
 
-        results
-            .into_iter()
-            .map(|(doc_id, references)| (doc_id, references))
-            .collect()
+        results.into_iter().collect()
     }
 
     fn tokenize(&self, text: &str) -> Vec<String> {
