@@ -154,48 +154,63 @@ fn handle_connection(mut stream: TcpStream, index: &InvertedIndex) {
         }
     };
 
-    // Parse the request to check for search query
+    const OK_REQUEST: &str = "HTTP/1.1 200 OK";
+    const BAD_REQUEST: &str = "HTTP/1.1 400 BAD REQUEST";
+    const NOT_FOUND: &str = "HTTP/1.1 404 NOT FOUND";
+
     let parts: Vec<&str> = request_line.split_whitespace().collect();
-    let (status_line, contents) = if parts.len() >= 3 && parts[0] == "GET" {
-        match parse_search_query(parts[1], index) {
-            Some(search_results) => ("HTTP/1.1 200 OK", search_results),
-            None => match parts[1] {
-                "/" => ("HTTP/1.1 200 OK", "Welcome to the Inverted Index Search Server. Use /search?q=your_query to search.".to_string()),
-                _ => ("HTTP/1.1 404 NOT FOUND", "404 Not Found".to_string())
+    let (status_line, contents) = if parts.len() >= 3 {
+        let method = parts[0];
+        let uri = parts[1];
+
+        if method == "GET" {
+            match uri {
+                "/" => (OK_REQUEST, "Welcome to the Inverted Index Search Server. Use /search?q=your_query to search.".to_string()),
+                query if query.starts_with("/search?q=") => {
+                    if let Ok(term) = urlencoding::decode(&query[10..]) {
+                        let results = index.search(&term);
+
+                        let contents = if results.is_empty() {
+                            format!("No results found for query: {}", query)
+                        } else {
+                            let mut output = format!("Search results for '{}':\n", query);
+                            for (doc_id, references) in results {
+                                output.push_str(&format!("Document ID: {}\n", doc_id));
+                                output.push_str(&format!("References: {:?}\n\n", references));
+                            }
+                            output
+                        };
+
+                        (OK_REQUEST, contents)
+                    } else {
+                        (BAD_REQUEST, "Invalid Search Query".to_string())
+                    }
+                },
+                query if query.starts_with("/document?docID=") => {
+                    if let Ok(Ok(doc_id)) = urlencoding::decode(&query[16..]).map(|arg| arg.parse::<usize>()) {
+                        let results = index.get_document(doc_id);
+
+                        let contents = if let Some(doc) = results {
+                            format!("Filename: {}\nContent: {}", doc.name, doc.content)
+                        } else {
+                            format!("No file with specified docID was found")
+                        };
+
+                        (OK_REQUEST, contents)
+                    } else {
+                        (BAD_REQUEST, "Invalid Search Query".to_string())
+                    }
+                },
+                _ => (NOT_FOUND, "404 Not Found".to_string()),
             }
+        } else {
+            (BAD_REQUEST, "Invalid Request".to_string())
         }
     } else {
-        ("HTTP/1.1 400 BAD REQUEST", "Invalid Request".to_string())
+        (BAD_REQUEST, "Invalid Request".to_string())
     };
 
     let length = contents.len();
     let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
     stream.write_all(response.as_bytes()).unwrap();
-}
-
-fn parse_search_query(path: &str, index: &InvertedIndex) -> Option<String> {
-    if !path.starts_with("/search?q=") {
-        return None;
-    }
-
-    // URL decode the query
-    let query = match urlencoding::decode(&path[10..]) {
-        Ok(decoded) => decoded.to_string(),
-        Err(_) => return Some("Error decoding search query".to_string()),
-    };
-
-    // Perform the search
-    let results = index.search(&query);
-
-    // Format the results
-    if results.is_empty() {
-        Some(format!("No results found for query: {}", query))
-    } else {
-        let mut output = format!("Search results for '{}':\n", query);
-        for (doc_id, references) in results {
-            output.push_str(&format!("Document ID: {}\n", doc_id));
-            output.push_str(&format!("References: {:?}\n\n", references));
-        }
-        Some(output)
-    }
 }
