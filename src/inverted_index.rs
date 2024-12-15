@@ -57,10 +57,7 @@ impl InvertedIndex {
 
         for token in tokens {
             if let Some(references) = index.get(&token) {
-                let token_docs: HashSet<usize> = references
-                    .iter()
-                    .map(|r| r.doc_id)
-                    .collect();
+                let token_docs: HashSet<usize> = references.iter().map(|r| r.doc_id).collect();
 
                 if results.is_empty() {
                     for reference in references {
@@ -77,7 +74,8 @@ impl InvertedIndex {
                             .iter()
                             .filter(|r| r.doc_id == *doc_id)
                             .cloned()
-                            .next() {
+                            .next()
+                        {
                             doc_refs.push(new_refs);
                         }
                     }

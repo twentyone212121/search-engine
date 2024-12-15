@@ -1,5 +1,8 @@
 use std::{
-    sync::{atomic::{self, AtomicUsize}, mpsc, Arc, Mutex},
+    sync::{
+        atomic::{self, AtomicUsize},
+        mpsc, Arc, Mutex,
+    },
     thread,
 };
 
@@ -23,7 +26,11 @@ impl ThreadPool {
         let active_tasks = Arc::new(AtomicUsize::new(0));
 
         for id in 0..size {
-            workers.push(Worker::new(id, Arc::clone(&receiver), Arc::clone(&active_tasks)));
+            workers.push(Worker::new(
+                id,
+                Arc::clone(&receiver),
+                Arc::clone(&active_tasks),
+            ));
         }
 
         ThreadPool {
@@ -70,7 +77,11 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>, active_tasks: Arc<AtomicUsize>) -> Worker {
+    fn new(
+        id: usize,
+        receiver: Arc<Mutex<mpsc::Receiver<Job>>>,
+        active_tasks: Arc<AtomicUsize>,
+    ) -> Worker {
         let thread = thread::spawn(move || loop {
             let message = receiver.lock().unwrap().recv();
 
