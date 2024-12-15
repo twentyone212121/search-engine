@@ -18,6 +18,7 @@ pub struct DocReference {
 pub struct InvertedIndex {
     index: RwLock<HashMap<String, Vec<DocReference>>>,
     next_doc_id: AtomicUsize,
+    documents: RwLock<HashMap<usize, Document>>,
 }
 
 impl InvertedIndex {
@@ -25,6 +26,7 @@ impl InvertedIndex {
         InvertedIndex {
             index: RwLock::new(HashMap::new()),
             next_doc_id: AtomicUsize::new(0),
+            documents: RwLock::new(HashMap::new()),
         }
     }
 
@@ -33,17 +35,21 @@ impl InvertedIndex {
 
         let tokens = self.tokenize(&document.content);
 
-        let mut index = self.index.write().unwrap();
+        {
+            let mut index = self.index.write().unwrap();
 
-        for (position, token) in tokens.into_iter().enumerate() {
-            index
-                .entry(token)
-                .or_insert_with(Vec::new)
-                .push(DocReference {
-                    doc_id,
-                    positions: vec![position],
-                });
+            for (position, token) in tokens.into_iter().enumerate() {
+                index
+                    .entry(token)
+                    .or_insert_with(Vec::new)
+                    .push(DocReference {
+                        doc_id,
+                        positions: vec![position],
+                    });
+            }
         }
+
+        self.documents.write().unwrap().insert(doc_id, document);
 
         doc_id
     }
@@ -105,5 +111,13 @@ impl InvertedIndex {
 
     pub fn term_count(&self) -> usize {
         self.index.read().unwrap().len()
+    }
+
+    pub fn get_document(&self, doc_id: usize) -> Option<Document> {
+        self.documents
+            .read()
+            .unwrap()
+            .get(&doc_id)
+            .map(|doc_ref| doc_ref.clone())
     }
 }
