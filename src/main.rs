@@ -6,21 +6,40 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, prelude::*, BufReader},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::Arc,
     thread,
     time::{Duration, SystemTime},
 };
+use clap::Parser;
 use thread_pool::ThreadPool;
 
-fn main() -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
-    let pool = ThreadPool::new(4);
-    let index = Arc::new(InvertedIndex::new());
-    let corpus_dir = "/Users/deniskyslytsyn/Documents/КПІшка))/7 семестр/ПО курс/aclImdb/train/pos";
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Config {
+    #[arg(long, default_value_t = IpAddr::V4(Ipv4Addr::LOCALHOST))]
+    ip: IpAddr,
 
-    let corpus = txt_files_in_dir(corpus_dir)?;
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+
+    #[arg(long)]
+    corpus_dir: PathBuf,
+
+    #[arg(long, default_value_t = 4)]
+    thread_num: usize,
+}
+
+fn main() -> io::Result<()> {
+    let config = Config::parse();
+
+    let listener = TcpListener::bind((config.ip, config.port)).unwrap();
+    let pool = ThreadPool::new(config.thread_num);
+    let index = Arc::new(InvertedIndex::new());
+    let corpus_dir = config.corpus_dir;
+
+    let corpus = txt_files_in_dir(&corpus_dir)?;
 
     // Index the corpus
     for path in corpus.clone() {
@@ -43,7 +62,7 @@ fn main() -> io::Result<()> {
         let index = Arc::clone(&index);
         pool.execute(move || {
             watch_directory(
-                corpus_dir,
+                &corpus_dir,
                 corpus,
                 Duration::from_secs(1),
                 |path| {
@@ -73,7 +92,7 @@ fn main() -> io::Result<()> {
 }
 
 fn watch_directory<F, G>(
-    dir_path: &str,
+    dir_path: &Path,
     present_files: Vec<PathBuf>,
     interval: Duration,
     on_new_file: F,
@@ -117,7 +136,7 @@ fn watch_directory<F, G>(
     }
 }
 
-fn txt_files_in_dir(dir_path: &str) -> io::Result<Vec<PathBuf>> {
+fn txt_files_in_dir(dir_path: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(fs::read_dir(dir_path)?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
