@@ -103,7 +103,7 @@ impl SearchServer {
     }
 
     pub fn run(&self) -> io::Result<()> {
-        for stream in self.listener.incoming().take(10) {
+        for stream in self.listener.incoming() {
             let stream = stream?;
             let index = Arc::clone(&self.index);
 
@@ -112,7 +112,6 @@ impl SearchServer {
             });
         }
 
-        println!("Shutting down.");
         Ok(())
     }
 }
