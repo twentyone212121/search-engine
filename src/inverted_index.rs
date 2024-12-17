@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{self, AtomicUsize};
 use std::sync::RwLock;
 use std::vec::Vec;
+use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug)]
 pub struct Document {
@@ -9,7 +10,7 @@ pub struct Document {
     pub content: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DocReference {
     pub doc_id: usize,
     pub matches: usize,

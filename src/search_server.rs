@@ -5,8 +5,10 @@ use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use serde::{Serialize, Deserialize};
+use serde_json;
 
-use crate::inverted_index::{Document, InvertedIndex};
+use crate::inverted_index::{Document, DocReference, InvertedIndex};
 use crate::thread_pool::ThreadPool;
 
 pub struct SearchServer {
@@ -183,10 +185,45 @@ fn add_file_to_index(path: &Path, index: &InvertedIndex) -> io::Result<()> {
     Ok(())
 }
 
-enum HttpResponse {
-    Ok(String),
-    BadRequest(String),
-    NotFound(String),
+#[derive(Serialize, Deserialize, Debug)]
+enum HttpStatus {
+    Ok,
+    BadRequest,
+    NotFound,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum Response {
+    Help(WelcomeResponse),
+    Search(SearchResponse),
+    Document(DocumentResponse),
+    Error(ErrorResponse),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct WelcomeResponse {
+    message: String,
+    endpoints: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SearchResponse {
+    query: String,
+    total_results: usize,
+    results: Vec<DocReference>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct DocumentResponse {
+    document_id: usize,
+    filename: String,
+    content: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ErrorResponse {
+    error: String,
 }
 
 fn handle_connection(mut stream: TcpStream, index: &InvertedIndex) {
@@ -203,78 +240,88 @@ fn handle_connection(mut stream: TcpStream, index: &InvertedIndex) {
         }
     };
 
-    let (status_line, contents) = match process_request(&request_line, index) {
-        HttpResponse::Ok(contents) => ("HTTP/1.1 200 OK", contents),
-        HttpResponse::BadRequest(contents) => ("HTTP/1.1 400 BAD REQUEST", contents),
-        HttpResponse::NotFound(contents) => ("HTTP/1.1 404 NOT FOUND", contents),
+    let (status, response) = process_request(&request_line, index);
+    let status_line = match status {
+        HttpStatus::Ok => "HTTP/1.1 200 OK",
+        HttpStatus::BadRequest => "HTTP/1.1 400 BAD REQUEST",
+        HttpStatus::NotFound => "HTTP/1.1 404 NOT FOUND",
     };
 
-    let length = contents.len();
-    let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+    let json_contents = serde_json::to_string(&response).unwrap();
+
+    let length = json_contents.len();
+    let response = format!("{status_line}\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n{json_contents}");
 
     if let Err(e) = stream.write_all(response.as_bytes()) {
         eprintln!("Failed to write response: {}", e);
     }
 }
 
-fn process_request(request_line: &str, index: &InvertedIndex) -> HttpResponse {
+fn process_request(request_line: &str, index: &InvertedIndex) -> (HttpStatus, Response) {
     let parts: Vec<&str> = request_line.split_whitespace().collect();
 
     if parts.len() < 3 {
-        return HttpResponse::BadRequest("Invalid Request".to_string());
+        return (HttpStatus::BadRequest, Response::Error(ErrorResponse { error: "Invalid Request".to_string() }));
     }
 
     let method = parts[0];
     let uri = parts[1];
 
     if method != "GET" {
-        return HttpResponse::BadRequest("Invalid Request Method".to_string());
+        return (HttpStatus::BadRequest, Response::Error(ErrorResponse { error: "Invalid Request Method".to_string() }));
     }
 
     match uri {
-        "/" => HttpResponse::Ok(
-            "Welcome to the Inverted Index Search Server. Use /search?q=your_query to search.".to_string()
+        "/" => (
+            HttpStatus::Ok,
+            Response::Help(WelcomeResponse {
+                message: "Welcome to the Inverted Index Search Server".to_string(),
+                endpoints: vec!["/search?q=<query>".to_string(), "/document?docID=<id>".to_string()],
+            })
         ),
         query if query.starts_with("/search?q=") => handle_search_request(&query[10..], index),
         query if query.starts_with("/document?docID=") => handle_document_request(&query[16..], index),
-        _ => HttpResponse::NotFound("404 Not Found".to_string()),
+        _ => (HttpStatus::NotFound, Response::Error(ErrorResponse { error: "404 Not Found".to_string() })),
     }
 }
 
-fn handle_search_request(query: &str, index: &InvertedIndex) -> HttpResponse {
+fn handle_search_request(query: &str, index: &InvertedIndex) -> (HttpStatus, Response) {
     match urlencoding::decode(query) {
         Ok(term) => {
             let results = index.search(&term);
 
-            let contents = if results.is_empty() {
-                format!("No results found for term: {}", term)
-            } else {
-                let mut output = format!("Search results for '{}':\n", term);
-                for doc_ref in results {
-                    output.push_str(&format!("Document ID: {}\n", doc_ref.doc_id));
-                    output.push_str(&format!("Matches: {}\n\n", doc_ref.matches));
-                }
-                output
-            };
-
-            HttpResponse::Ok(contents)
+            (HttpStatus::Ok, Response::Search(SearchResponse {
+                query: term.to_string(),
+                total_results: results.len(),
+                results,
+            }))
         },
-        Err(_) => HttpResponse::BadRequest("Invalid Search Query".to_string()),
+        Err(_) => (HttpStatus::BadRequest, Response::Error(ErrorResponse {
+            error: "Invalid Search Query".to_string(),
+        })),
     }
 }
 
-fn handle_document_request(query: &str, index: &InvertedIndex) -> HttpResponse {
+fn handle_document_request(query: &str, index: &InvertedIndex) -> (HttpStatus, Response) {
     match urlencoding::decode(query)
         .map_err(|_| ())
         .and_then(|arg| arg.parse::<usize>().map_err(|_| ()))
     {
         Ok(doc_id) => {
-            let contents = index.get_document(doc_id)
-                .map(|doc| format!("Filename: {}\nContent: {}", doc.name, doc.content))
-                .unwrap_or_else(|| "No file with specified docID was found".to_string());
-
-            HttpResponse::Ok(contents)
+            if let Some(document) = index.get_document(doc_id) {
+                (HttpStatus::Ok, Response::Document(DocumentResponse {
+                    document_id: doc_id,
+                    filename: document.name,
+                    content: document.content,
+                }))
+            } else {
+                (HttpStatus::Ok, Response::Error(ErrorResponse {
+                    error: "No file with specified docID was found".to_string(),
+                }))
+            }
         },
-        Err(_) => HttpResponse::BadRequest("Invalid Document ID".to_string()),
+        Err(_) => (HttpStatus::BadRequest, Response::Error(ErrorResponse {
+            error: "Invalid Document ID".to_string(),
+        })),
     }
 }
