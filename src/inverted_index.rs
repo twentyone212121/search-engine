@@ -68,9 +68,9 @@ impl InvertedIndex {
                 if results.is_empty() {
                     results = HashSet::from_iter(references.iter().cloned());
                 } else {
-                    let references: HashSet<DocReference> =
-                        HashSet::from_iter(references.iter().cloned());
-                    results.retain(|doc_ref| references.contains(doc_ref));
+                    let references: HashSet<usize> =
+                        HashSet::from_iter(references.iter().map(|doc_ref| doc_ref.doc_id));
+                    results.retain(|doc_ref| references.contains(&doc_ref.doc_id));
                 }
             } else {
                 return Vec::new();
