@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Search Server Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #search-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .result {
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            padding: 10px;
+        }
+        .highlight {
+            background-color: yellow;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Search Documents</h1>
+    <input type="text" id="search-input" placeholder="Enter search term">
+    <button onclick="performSearch()">Search</button>
+    <div id="results"></div>
+
+    <script>
+    function highlightTerm(text, term) {
+        if (!term) return text;
+
+        // Escape special regex characters and split the term into words
+        const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const words = term.split(/\s+/).map(word =>
+            word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        );
+
+        const exactRegex = new RegExp(`(${escapedTerm})`, 'gi');
+        const wordRegexes = words.map(word => new RegExp(`\\b(${word})\\b`, 'gi'));
+
+        let highlightedText = text.replace(exactRegex, '<span class="highlight">$1</span>');
+
+        for (const wordRegex of wordRegexes) {
+            highlightedText = highlightedText.replace(wordRegex, '<span class="highlight">$1</span>');
+        }
+
+        return highlightedText;
+    }
+
+        async function performSearch() {
+            const serverUrl = 'http://localhost:7878';
+            const searchInput = document.getElementById('search-input');
+            const resultsDiv = document.getElementById('results');
+            const term = searchInput.value.trim();
+
+            if (!term) {
+                resultsDiv.innerHTML = 'Please enter a search term';
+                return;
+            }
+
+            try {
+                const encodedTerm = encodeURIComponent(term);
+                const response = await fetch(`${serverUrl}/search?q=${encodedTerm}`);
+
+                if (!response.ok) {
+                    throw new Error('Search request failed');
+                }
+
+                const data = await response.json();
+
+                if (data.total_results === 0) {
+                    resultsDiv.innerHTML = 'No results found';
+                    return;
+                }
+
+                // Fetch maximum of 10 documents
+                const documentPromises = data.results.slice(0, 10).map(async (result) => {
+                  const docResponse = await fetch(`${serverUrl}/document?docID=${result.doc_id}`);
+                    return docResponse.json();
+                });
+
+                const documents = await Promise.all(documentPromises);
+
+                resultsDiv.innerHTML = documents.map((doc, index) => `
+                    <div class="result">
+                        <h3>Document ${doc.document_id}</h3>
+                        <p><strong>Filename:</strong> ${doc.filename}</p>
+                        <p>${highlightTerm(doc.content, term)}</p>
+                        <p><em>Matches: ${data.results[index].matches}</em></p>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                resultsDiv.innerHTML = `Error: ${error.message}`;
+            }
+        }
+
+        document.getElementById('search-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                performSearch();
+            }
+        });
+    </script>
+</body>
+</html>
